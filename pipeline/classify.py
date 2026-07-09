@@ -1,17 +1,9 @@
 """
 classify.py — AAMI beat classification with a proper inter-patient split.
 
-The key methodological point: train on DS1 patients, test on DS2 patients.
-No patient appears in both. This is far harder (and far more honest) than the
-intra-patient numbers most public projects report.
-
-Here we use the reference (annotated) R-peak locations for feature extraction,
-so classification is evaluated independently of detection error. That's the
-standard way to isolate the two problems.
-
-Running run_classification() also saves the deliverables that close out
-Stage 1.1: a confusion-matrix figure, a metrics block written into
-docs/results.md, and the trained model in models/.
+Train on DS1 patients, test on DS2 patients. No patient appears in both.
+Running run_classification() saves the Stage 1.1 deliverables: a
+confusion-matrix figure, a metrics block in docs/results.md, and the model.
 """
 
 import os
@@ -23,6 +15,22 @@ import joblib
 
 from .data_loader import load_record, AAMI_CLASSES, DS1_TRAIN, DS2_TEST
 from .features import extract_features
+
+
+def _gentle_weights(y):
+    """
+    sqrt-inverse-frequency class weights, capped.
+
+    Full 'balanced' weighting over-weights ultra-rare classes so hard the model
+    scatters false positives everywhere (the F-class leak in v1). sqrt-inverse
+    boosts minority classes enough to be learned without letting a 388-beat
+    class dominate a 44,000-beat one; the cap stops the 7-beat Q class leaking.
+    """
+    classes, counts = np.unique(y, return_counts=True)
+    w = np.sqrt(counts.sum() / counts)
+    w = w / w.min()
+    w = np.clip(w, 1.0, 12.0)
+    return {c: float(wi) for c, wi in zip(classes, w)}
 
 
 def build_dataset(record_ids, pn_dir="mitdb"):
@@ -46,14 +54,14 @@ def run_classification(pn_dir="mitdb", out_dir="docs", model_dir="models"):
 
     scaler = StandardScaler().fit(X_tr)
     clf = RandomForestClassifier(
-        n_estimators=200, class_weight="balanced",
+        n_estimators=300, min_samples_leaf=5,
+        class_weight=_gentle_weights(y_tr),
         n_jobs=-1, random_state=0)
     clf.fit(scaler.transform(X_tr), y_tr)
 
     y_pred = clf.predict(scaler.transform(X_te))
     cm, report_txt = report_classification(y_te, y_pred, out_dir=out_dir)
 
-    # Save the trained model + scaler so this run is reproducible.
     os.makedirs(model_dir, exist_ok=True)
     joblib.dump({"model": clf, "scaler": scaler},
                 os.path.join(model_dir, "beat_classifier.joblib"))
@@ -114,13 +122,12 @@ def _write_results_md(out_dir, y_true, y_pred, report_txt, n_train, n_test):
         "\n## Classification (Stage 1.1)\n\n"
         "Inter-patient split (de Chazal): trained on DS1 (22 patients), "
         "tested on DS2 (22 different patients). Features from annotated "
-        "R-peaks; RandomForest, class-balanced.\n\n"
+        "R-peaks; RandomForest, sqrt-inverse-frequency class weights.\n\n"
         f"- Train beats: {n_train}\n"
         f"- Test beats: {n_test}\n\n"
         "![Confusion matrix](confusion_matrix.png)\n\n"
         "```\n" + report_txt + "```\n"
     )
-    # Append if the file already has a detection section; else create.
     mode = "a" if os.path.exists(path) else "w"
     with open(path, mode) as f:
         if mode == "w":
