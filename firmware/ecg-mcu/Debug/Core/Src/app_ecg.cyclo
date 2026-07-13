@@ -1,0 +1,3 @@
+../Core/Src/app_ecg.c:21:13:cyc_init	1
+../Core/Src/app_ecg.c:26:17:cyc_now	1
+../Core/Src/app_ecg.c:29:6:app_ecg_run	5

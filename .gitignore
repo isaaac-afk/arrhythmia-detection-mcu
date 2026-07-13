@@ -6,3 +6,11 @@ mitdb/
 *.hea
 *.atr
 models/
+
+SetupSTM32CubeMX*/
+stm32cubeide*.exe/
+*.exe
+
+SetupSTM32CubeMX*/
+stm32cubeide*.exe/
+*.exe
