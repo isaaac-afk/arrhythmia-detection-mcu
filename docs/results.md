@@ -73,6 +73,35 @@ spends its first ~2 s learning adaptive thresholds. Identical on desktop
 and device. Roughly 2 beats at the head and 1-2 at the tail fall outside
 the detected window — 72 detected against ~76 expected at 76 BPM.
 
+## Scope: detection on-device, classification in Python (Phase 1)
+
+Stage 1.3 deploys the **R-peak detector** to hardware. The classical AAMI
+beat classifier from Stage 1.1 remains in Python and is deliberately not
+ported to C or to the MCU during Phase 1.
+
+**Why.** Stage 1.1 established the ceiling of hand-crafted RR + morphology
+features: N and V separate well, S and F do not. That result is the reason
+Phase 2 exists — a quantized 1D-CNN replaces the classical classifier
+outright. Porting a RandomForest to embedded C (tree export, feature
+extraction, float bit-matching against the Python reference) is several days
+of work, and in Phase 1 it has nothing to be compared against.
+
+**Deferred, not cancelled.** The port happens in **Stage 2.3**, where it
+becomes the baseline arm of the classical-vs-NN head-to-head. That
+comparison — accuracy, latency, flash/RAM, power, all measured on the same
+device — is only meaningful if both classifiers run on the same hardware. So
+the C/MCU port is scheduled for the stage where it earns its keep rather
+than done on spec here.
+
+**Consequence for this stage.** On-device output is R-peak indices, verified
+72/72 against the desktop C reference on record 100. Checkpoint 1.3's
+"on-device classifications" is read as on-device *detections*; end-to-end
+classification latency is a Phase 2 measurement.
+
+This also closes a gap inherited from Checkpoint 1.2, whose wording asked for
+R-peaks *and labels* from the C pipeline. `c-reference/` emits peaks only.
+The same reasoning applies: labels arrive with the Stage 2.3 port.
+
 ---
 
 **Not a medical device.** Engineering portfolio project. Not for diagnosis

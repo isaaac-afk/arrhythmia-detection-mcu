@@ -87,3 +87,7 @@ See `docs/results.md` for measured latency and footprint.
 ---
 
 **Not a medical device.**
+
+**Scope:** this firmware runs R-peak *detection* only. Beat classification
+stays in Python during Phase 1 and moves on-device in Stage 2.3 — see
+`docs/results.md`, "Scope: detection on-device, classification in Python."
