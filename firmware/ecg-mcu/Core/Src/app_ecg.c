@@ -27,6 +27,7 @@ static uint32_t cyc_now(void) { return DWT->CYCCNT; }
 #endif
 
 void app_ecg_run(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);   /* <-- add this */
     pt_detector d;
     pt_init(&d);
     cyc_init();
