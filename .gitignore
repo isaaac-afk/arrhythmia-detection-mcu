@@ -14,3 +14,9 @@ stm32cubeide*.exe/
 SetupSTM32CubeMX*/
 stm32cubeide*.exe/
 *.exe
+
+# CubeIDE build artifacts
+firmware/ecg-mcu/Debug/
+
+# scratch serial captures
+run.log
