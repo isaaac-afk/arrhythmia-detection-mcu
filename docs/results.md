@@ -106,3 +106,38 @@ The same reasoning applies: labels arrive with the Stage 2.3 port.
 
 **Not a medical device.** Engineering portfolio project. Not for diagnosis
 or clinical use.
+
+## Stage 1.3c — timer-driven real-time playback
+
+TIM2 @ 84 MHz, PSC=0, ARR=233332. ARR+1 = 233333 gives **360.0000857 Hz** —
+exact 360 Hz is unreachable from an 84 MHz clock (84e6/360 = 233333.33).
+
+ISR pushes one sample into a 64-slot ring buffer; the main loop drains it and
+calls `pt_process`. Acquisition and processing never touch the same slot.
+
+| Metric | Value |
+|---|---|
+| R-peaks | **72/72**, identical to the free-running build |
+| samples processed | 21600 / 21600 |
+| ring buffer overflows | **0** |
+| wall clock | 60003 ms (expected 60000) — **0.005% error** |
+| avg compute/sample | 3649 cyc |
+| worst compute/sample | 14047 cyc |
+
+**Clock accuracy.** The 3 ms drift comes from the 360.0000857 Hz quantization,
+`HAL_GetTick` granularity, and the HSI internal oscillator (spec ±1%). A real
+device would use an external crystal (HSE).
+
+**ISR cost, measured indirectly.** Per-sample compute rose from 3627/14004 cyc
+(free-running) to 3649/14047 cyc under the timer. The DWT-measured region is
+now preemptible: at 3627 cyc per sample against a 233333-cyc tick, the ISR
+lands inside the measurement ~1.55% of the time. A +22 cyc average implies
+`HAL_TIM_IRQHandler` costs roughly 1400 cycles — consistent with HAL's known
+overhead. A register-level handler would be ~20 cycles.
+
+**Why this matters for Stage 1.4.** The free-running loop consumed 60 s of ECG
+in ~1 s: it proved compute, not scheduling. The AD8232 will deliver samples at
+360 Hz regardless of readiness. Zero overflows at 6% CPU utilization means the
+sample path holds.
+
+Artifact: `firmware/board_peaks_rec100_timed.txt`.
