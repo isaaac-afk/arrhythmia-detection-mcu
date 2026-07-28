@@ -4,7 +4,6 @@ Filters MIT-BIH ECG, detects R-peaks with Pan-Tompkins, classifies beats into
 AAMI classes, and validates both with a proper **inter-patient** split.
 
 ## Setup
-
 ```
 pip install -r requirements.txt
 ```
@@ -13,7 +12,6 @@ The first run downloads MIT-BIH from PhysioNet automatically (via `wfdb`,
 `pn_dir='mitdb'`) — no manual download, but you need internet access.
 
 ## Run order + checkpoints
-
 ```
 # 1. R-peak detection on a single clean record
 python run_stage1.py detect 100
