@@ -44,7 +44,6 @@ python run_stage1.py classify
 | `run_stage1.py` | CLI entry point |
 
 ## Notes
-
 - Detection is scored against annotated R-peaks; classification uses annotated
   R-peak locations for features, so the two problems are evaluated separately
   (standard practice).
