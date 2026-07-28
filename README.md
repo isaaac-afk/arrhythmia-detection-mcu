@@ -33,7 +33,6 @@ python run_stage1.py classify
 ```
 
 ## Files
-
 | File | Role |
 |---|---|
 | `pipeline/data_loader.py` | MIT-BIH load, AAMI mapping, de Chazal DS1/DS2 lists |
