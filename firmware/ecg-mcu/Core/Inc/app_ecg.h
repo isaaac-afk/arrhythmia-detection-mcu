@@ -6,4 +6,8 @@
 #define APP_ECG_H
 void app_ecg_run(void);
 void app_ecg_run_timed(void);      /* Stage 1.3c: TIM2 @ 360 Hz + ring buffer */
+void app_ecg_dump(void);
+void app_ecg_menu(void);
 #endif
+
+void app_ecg_adc_raw(void);
