@@ -154,6 +154,10 @@ void app_ecg_run_timed(void)
         total_cyc += dc;
         if (dc > worst_cyc) worst_cyc = dc;
         processed++;
+        /* --- 1.4e: stream sample to dashboard (outside the DWT window) ---
+          * mV double -> integer microvolts, so newlib-nano's stripped float
+          * printf is never touched. Live mode later prints raw uint16 the same way. */
+         printf("S %ld\r\n", (long)(s * 1000.0));
 
         if (fired) {
                     uint32_t bpm_val = bpm_update(&bpm, ridx, ECG_FS);
