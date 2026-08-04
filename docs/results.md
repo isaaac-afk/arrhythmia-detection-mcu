@@ -164,3 +164,26 @@ Same de Chazal inter-patient split (DS1 train / DS2 test) and sqrt-inverse-frequ
    macro avg      0.256     0.342     0.263     49692
 weighted avg      0.882     0.745     0.793     49692
 ```
+
+## Phase 2.1b — 1-D CNN + RR timing
+
+The 2.1 baseline was blind to beat timing (window centred on R). This two-input model adds prev_RR and RR_ratio (prev_RR / local-average RR) through a small dense branch, merged before the head. 7925 params, raw 252-sample window; same de Chazal split + class weights.
+
+- Train beats: 40735
+- Test beats: 49692
+
+![CNN+RR confusion matrix](confusion_matrix_cnn_rr.png)
+
+```
+              precision    recall  f1-score   support
+
+           N      0.969     0.962     0.966     44240
+           S      0.612     0.167     0.262      1837
+           V      0.602     0.933     0.732      3220
+           F      0.007     0.005     0.006       388
+           Q      0.000     0.000     0.000         7
+
+    accuracy                          0.923     49692
+   macro avg      0.438     0.413     0.393     49692
+weighted avg      0.925     0.923     0.917     49692
+```
