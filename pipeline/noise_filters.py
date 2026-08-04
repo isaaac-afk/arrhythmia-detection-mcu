@@ -15,10 +15,10 @@ It also prints the biquad coefficients ready to paste into C for the firmware,
 and does an optional R-peak detection sanity check (clean vs noisy vs filtered)
 with a small reference Pan-Tompkins.
 
-Run:
-    python noise_filters.py                 # uses MIT-BIH record 100
-    python noise_filters.py --synthetic     # no data download; synthetic ECG
-    python noise_filters.py --hum-mv 0.25    # heavier mains hum
+Run from the repo root (it imports the pipeline package):
+    python -m pipeline.noise_filters                 # uses MIT-BIH record 100
+    python -m pipeline.noise_filters --synthetic     # no data download; synthetic ECG
+    python -m pipeline.noise_filters --hum-mv 0.25   # heavier mains hum
 
 Real-time note: validation uses scipy.signal.sosfilt (CAUSAL), never filtfilt.
 filtfilt is zero-phase but runs the data backwards too — impossible on a live
@@ -32,6 +32,17 @@ from scipy import signal
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+import os, sys
+# Import Isaac's real Stage 1.1 detector + matcher. They live in the `pipeline`
+# package and use package-relative imports, so put the repo root on sys.path and
+# import by full package path — works whether this is run as a script
+# (python pipeline/noise_filters.py) or a module (python -m pipeline.noise_filters).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from pipeline.pan_tompkins import detect_rpeaks      # real adaptive detector
+from pipeline.evaluate_detection import match_peaks  # real matcher (150 ms tol)
 
 FS = 360.0            # Hz — matches the firmware sample rate
 HP_CUT = 0.5          # Hz — baseline-wander high-pass corner
@@ -115,42 +126,8 @@ def add_noise(x, t, fs=FS, hum_mv=0.15, wander_mv=0.30, gauss_mv=0.01, seed=0):
     return x + wander + mains + white
 
 
-# ------------------------------------------------------ reference detector ---
-def pan_tompkins(x, fs=FS):
-    """Compact reference Pan-Tompkins for a detection sanity check ONLY.
-    (Not the production firmware detector — just to compare clean/noisy/filtered.)"""
-    sos = signal.butter(2, [5, 15], btype="band", fs=fs, output="sos")
-    b = signal.sosfilt(sos, x)
-    d = np.diff(b, prepend=b[0])
-    sq = d * d
-    win = max(1, int(0.150 * fs))
-    integ = np.convolve(sq, np.ones(win) / win, mode="same")
-    thr = 0.3 * np.mean(integ) + 0.5 * np.std(integ)
-    refractory = int(0.2 * fs)
-    peaks, last = [], -refractory
-    for i in range(1, len(integ) - 1):
-        if integ[i] > thr and integ[i] >= integ[i - 1] and integ[i] > integ[i + 1]:
-            if i - last > refractory:
-                peaks.append(i)
-                last = i
-    return np.array(peaks)
 
 
-def compare_peaks(ref, test, fs=FS, tol_s=0.05):
-    """Sensitivity / PPV of `test` peaks against `ref` peaks."""
-    tol = int(tol_s * fs)
-    matched = set()
-    tp = 0
-    for p in test:
-        near = [j for j in range(len(ref)) if abs(ref[j] - p) <= tol and j not in matched]
-        if near:
-            tp += 1
-            matched.add(min(near, key=lambda j: abs(ref[j] - p)))
-    fn = len(ref) - tp
-    fp = len(test) - tp
-    sens = tp / (tp + fn) if (tp + fn) else 0.0
-    ppv = tp / (tp + fp) if (tp + fp) else 0.0
-    return sens, ppv, tp, fp, fn
 
 
 # ------------------------------------------------------------ spectrum -------
@@ -235,16 +212,18 @@ def main():
     print(f"  60 Hz band power   : {p60_noisy:.4e} -> {p60_filt:.4e}  ({db(p60_noisy, p60_filt):+.1f} dB)")
     print(f"  <0.5 Hz drift power: {plo_noisy:.4e} -> {plo_filt:.4e}  ({db(plo_noisy, plo_filt):+.1f} dB)")
 
-    # --- detection sanity check (reference detector) ---
-    pk_clean = pan_tompkins(clean)
-    pk_noisy = pan_tompkins(noisy)
-    pk_filt = pan_tompkins(filt)
-    s_n, p_n, *_ = compare_peaks(pk_clean, pk_noisy)
-    s_f, p_f, *_ = compare_peaks(pk_clean, pk_filt)
-    print("\nR-peak detection vs the clean reference (tolerance 50 ms):")
-    print(f"  clean beats detected : {len(pk_clean)}")
-    print(f"  noisy   : sensitivity {s_n*100:5.1f}%   PPV {p_n*100:5.1f}%")
-    print(f"  filtered: sensitivity {s_f*100:5.1f}%   PPV {p_f*100:5.1f}%")
+    # --- detection check with YOUR real detector + matcher ---
+    # Reference = the detector's own peaks on the CLEAN signal, so this isolates
+    # the filters' effect (does noise/filtering change what the detector finds?).
+    pk_clean = detect_rpeaks(clean, FS)
+    pk_noisy = detect_rpeaks(noisy, FS)
+    pk_filt  = detect_rpeaks(filt, FS)
+    m_noisy = match_peaks(pk_noisy, pk_clean, FS)   # (detected, reference, fs)
+    m_filt  = match_peaks(pk_filt,  pk_clean, FS)
+    print("\nR-peak detection vs the clean-signal peaks (your detector, 150 ms tolerance):")
+    print(f"  clean peaks : {len(pk_clean)}   noisy peaks : {len(pk_noisy)}   filtered peaks : {len(pk_filt)}")
+    print(f"  noisy    : Se {m_noisy['sensitivity']*100:5.1f}%   PPV {m_noisy['ppv']*100:5.1f}%   F1 {m_noisy['f1']*100:5.1f}%")
+    print(f"  filtered : Se {m_filt['sensitivity']*100:5.1f}%   PPV {m_filt['ppv']*100:5.1f}%   F1 {m_filt['f1']*100:5.1f}%")
 
     # --- plots ---
     wpath = f"{args.out_prefix}_waveforms.png"

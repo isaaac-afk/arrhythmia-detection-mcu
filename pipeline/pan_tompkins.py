@@ -36,6 +36,7 @@ def detect_rpeaks(signal, fs, refractory_s=0.20, search_neighbourhood_s=0.05):
     -------
     rpeaks : int array of sample indices of detected R-peaks.
     """
+    fs = int(round(fs))          # accept float fs (e.g. 360.0) safely
     # --- Stage 1: transform the signal so QRS stands out ------------------
     filtered = bandpass(signal, fs)
     deriv = _derivative(filtered, fs)
