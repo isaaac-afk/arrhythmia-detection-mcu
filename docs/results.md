@@ -141,3 +141,26 @@ in ~1 s: it proved compute, not scheduling. The AD8232 will deliver samples at
 sample path holds.
 
 Artifact: `firmware/board_peaks_rec100_timed.txt`.
+
+## Phase 2.1 — 1-D CNN
+
+Same de Chazal inter-patient split (DS1 train / DS2 test) and sqrt-inverse-frequency class weights as Stage 1.1, but the classifier is a compact 1-D CNN (7365 params) fed RAW 252-sample beat windows around each R-peak — no hand-crafted features.
+
+- Train beats: 40735
+- Test beats: 49692
+
+![CNN confusion matrix](confusion_matrix_cnn.png)
+
+```
+              precision    recall  f1-score   support
+
+           N      0.969     0.770     0.858     44240
+           S      0.034     0.028     0.031      1837
+           V      0.277     0.909     0.425      3220
+           F      0.001     0.005     0.001       388
+           Q      0.000     0.000     0.000         7
+
+    accuracy                          0.745     49692
+   macro avg      0.256     0.342     0.263     49692
+weighted avg      0.882     0.745     0.793     49692
+```
