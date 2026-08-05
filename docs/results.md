@@ -187,3 +187,22 @@ The 2.1 baseline was blind to beat timing (window centred on R). This two-input 
    macro avg      0.438     0.413     0.393     49692
 weighted avg      0.925     0.923     0.917     49692
 ```
+
+## Phase 2.2 — int8 quantization
+
+Full-integer post-training quantization of the RR-augmented CNN via the LiteRT converter (300 DS1 calibration samples). DS2 accuracy: float32 92.27% -> int8 91.14% (+1.13 pts). Model size 167.1 KB (Keras) -> 24.7 KB (int8 .tflite).
+
+int8 per-class metrics:
+```
+              precision    recall  f1-score   support
+
+           N      0.974     0.948     0.961     44240
+           S      0.585     0.162     0.254      1837
+           V      0.601     0.942     0.734      3220
+           F      0.006     0.015     0.008       388
+           Q      0.000     0.000     0.000         7
+
+    accuracy                          0.911     49692
+   macro avg      0.433     0.414     0.391     49692
+weighted avg      0.928     0.911     0.912     49692
+```
