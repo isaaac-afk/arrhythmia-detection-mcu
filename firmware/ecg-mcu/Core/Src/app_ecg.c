@@ -3,6 +3,9 @@
 #include "detector.h"
 #include "ecg_data.h"
 #include "app_ecg.h"
+#include "beat_cnn.h"
+#include "model_config.h"   /* WIN_PRE, WIN_POST, RR_MEAN[2], RR_STD[2], CLASS_NAMES */
+#include <math.h>
 
 /* Core clock in MHz. Set to match your CubeMX clock configuration
  * (100 for a 100 MHz SYSCLK). Used only to convert cycles -> ns. */
@@ -119,7 +122,61 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     rb[rb_head] = ecg_samples[feed_idx++];
     rb_head = next;
 }
+/* ---- Stage 2.3: on-device beat classification (float CNN) ---- */
+#define RR_HIST 8
+static float s_rr_hist[RR_HIST];
+static int   s_rr_n = 0;
+static long  s_prev_ridx = -1;
+static void classify_reset(void){ s_rr_n = 0; s_prev_ridx = -1; }
 
+static int classify_beat(long ridx)
+{
+    if (s_prev_ridx < 0){ s_prev_ridx = ridx; return -1; }   /* first beat: no RR */
+    float prev_rr = (float)(ridx - s_prev_ridx) / (float)ECG_FS;
+    float avg = prev_rr;
+    if (s_rr_n > 0){ float s=0; for(int i=0;i<s_rr_n;i++) s+=s_rr_hist[i]; avg=s/s_rr_n; }
+    float ratio = (avg > 1e-6f) ? prev_rr/avg : 1.0f;
+    if (s_rr_n < RR_HIST) s_rr_hist[s_rr_n++] = prev_rr;
+    else { for(int i=1;i<RR_HIST;i++) s_rr_hist[i-1]=s_rr_hist[i]; s_rr_hist[RR_HIST-1]=prev_rr; }
+    s_prev_ridx = ridx;
+
+    long a = ridx - WIN_PRE, b = ridx + WIN_POST;
+    if (a < 0 || b > ECG_N) return -1;                       /* edge beat */
+    float beat[WIN_LEN];
+    double mean=0; for(long i=a;i<b;i++) mean+=ecg_samples[i]; mean/=WIN_LEN;
+    double var=0;  for(long i=a;i<b;i++){ double d=ecg_samples[i]-mean; var+=d*d; } var/=WIN_LEN;
+    double sd=sqrt(var); if(sd<1e-6) sd=1.0;
+    for(int i=0;i<WIN_LEN;i++) beat[i]=(float)((ecg_samples[a+i]-mean)/sd);
+    float rr[2];
+    rr[0]=(prev_rr-RR_MEAN[0])/RR_STD[0];
+    rr[1]=(ratio  -RR_MEAN[1])/RR_STD[1];
+    return beat_cnn_argmax(beat, rr);
+}
+
+/* ---- Stage 2.3: CNN inference-latency bench (off the real-time path) ---- */
+void app_ecg_classify_bench(void)
+{
+    printf("\r\n=== Stage 2.3: CNN latency bench (20 runs, off real-time) ===\r\n");
+    long a = 5000 - WIN_PRE;
+    float beat[WIN_LEN];
+    double mean = 0; for (long i=a;i<a+WIN_LEN;i++) mean += ecg_samples[i]; mean /= WIN_LEN;
+    double var  = 0; for (long i=a;i<a+WIN_LEN;i++){ double d=ecg_samples[i]-mean; var+=d*d; } var /= WIN_LEN;
+    double sd = sqrt(var); if (sd < 1e-6) sd = 1.0;
+    for (int i=0;i<WIN_LEN;i++) beat[i] = (float)((ecg_samples[a+i]-mean)/sd);
+    float rr[2] = { 0.0f, 0.0f };
+
+    uint32_t best=0xFFFFFFFF, worst=0, sum=0; int cls=0;
+    for (int n=0;n<20;n++) {
+        uint32_t c0 = cyc_now();
+        cls = beat_cnn_argmax(beat, rr);
+        uint32_t d = cyc_now() - c0;
+        if (d<best) best=d; if (d>worst) worst=d; sum += d;
+        printf("  run %2d: %lu us  (class %s)\r\n", n, (unsigned long)(d/CPU_MHZ), CLASS_NAMES[cls]);
+    }
+    printf("  --- min %lu us  avg %lu us  max %lu us  (546048 MACs/beat) ---\r\n",
+           (unsigned long)(best/CPU_MHZ), (unsigned long)((sum/20)/CPU_MHZ),
+           (unsigned long)(worst/CPU_MHZ));
+}
 void app_ecg_run_timed(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -128,7 +185,7 @@ void app_ecg_run_timed(void)
     bpm_state bpm;
     bpm_init(&bpm);
     cyc_init();
-
+    classify_reset();
     rb_head = rb_tail = feed_idx = rb_overflow = 0;
     feed_done = 0;
 
@@ -163,6 +220,12 @@ void app_ecg_run_timed(void)
                     uint32_t bpm_val = bpm_update(&bpm, ridx, ECG_FS);
                     if (bpm_val) printf("R-peak @ %ld   inst BPM %lu\r\n",
                                         ridx, (unsigned long)bpm_val);
+                    uint32_t nn0 = cyc_now();
+                        int cls = classify_beat(ridx);
+
+                        uint32_t nn_us = (cyc_now() - nn0) / CPU_MHZ;
+                        if (cls >= 0)
+                            printf("  class %s  (nn %lu us)\r\n", CLASS_NAMES[cls], (unsigned long)nn_us);
                     else         printf("R-peak @ %ld   (first)\r\n", ridx);
                     n_peaks++;
                 }
@@ -207,15 +270,17 @@ void app_ecg_menu(void)
     printf("  [1] replay, free-running        (Stage 1.3b)\r\n");
     printf("  [2] replay, TIM2-driven 360 Hz  (Stage 1.3c)\r\n");
     printf("  [3] dump samples as hex         (harness self-test)\r\n");
+    printf("  [4] CNN latency bench           (Stage 2.3)\r\n");
     printf("select within 5 s [default 2]: ");
 
     if (HAL_UART_Receive(&huart2, &c, 1, 5000) != HAL_OK) c = '2';
     printf("%c\r\n", (char)c);
 
     switch (c) {
-        case '1': app_ecg_run();  break;
-        case '3': app_ecg_dump(); break;
-        default:  app_ecg_run_timed(); break;
+        case '1': app_ecg_run();             break;
+        case '3': app_ecg_dump();            break;
+        case '4': app_ecg_classify_bench();  break;
+        default:  app_ecg_run_timed();       break;
     }
 }
 #endif
