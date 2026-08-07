@@ -206,3 +206,52 @@ int8 per-class metrics:
    macro avg      0.433     0.414     0.391     49692
 weighted avg      0.928     0.911     0.912     49692
 ```
+
+## Stage 2.3 â€” on-device inference (classical vs. neural net)
+
+The RR-augmented CNN (int8-quantized in Stage 2.2) was deployed to the
+STM32F411RE (Cortex-M4F @ 84 MHz) and run on replayed MIT-BIH beats. On-device
+inference is a **hand-written float C engine** (`beat_cnn.c`) running on the FPU,
+verified bit-close to the trained Keras model (max output difference 1.19e-7)
+before deployment. Each detected beat's 252-sample window is cut from the record,
+z-normalized, paired with its two standardized RR-timing features, and classified.
+
+### Head-to-head (STM32F411RE @ 84 MHz)
+
+| | Panâ€“Tompkins detector | RR-augmented CNN classifier |
+|---|---|---|
+| Task | R-peak detection | 5-class AAMI beat classification |
+| Accuracy (inter-patient DS2) | 72/72 R-peaks on rec. 100 | 91.1% (int8) / 92.3% (float) |
+| vs. RandomForest baseline | â€” | RF 85.3% (CNN wins, esp. V and S) |
+| On-device latency | ~38 Âµs/beat | 318 ms/beat (-O0) â†’ **85 ms/beat (-O2)** |
+| Compute | ~3.6k cycles/sample | 546k MACs/beat |
+| Flash | ~18 KB | +36.6 KB (weights + code) |
+| RAM | ~2 KB | +64 KB scratch (halvable to ~32 KB with sized buffers) |
+| Runs inline in the sample loop? | Yes | No â€” see below |
+
+### The key systems finding
+
+Even optimized, the CNN is ~85 ms/beat â€” about **2,200Ã— heavier than the
+detector** (~38 Âµs) and ~30Ã— the 360 Hz real-time budget of 2.78 ms/sample.
+Running it inline inside the sample-drain loop stalls acquisition long enough
+that the ring overflows: a 60 s record stretched to 70.9 s and dropped 3,905
+samples.
+
+This is expected, not a defect: **per-sample detection and per-beat
+classification have fundamentally different time budgets.** Detection must keep
+up with every sample (2.78 ms); classification only needs to keep up with every
+*beat* (~830 ms at 72 bpm). The correct architecture runs the lightweight
+Panâ€“Tompkins detector on every sample and schedules the CNN at beat-rate off the
+critical path â€” flag the R-peak, then run inference in the main loop's idle time
+(or a lower-priority task) while the detector keeps draining the ring. At 85 ms
+per inference against an ~830 ms beat interval, there is ~10Ã— headroom at
+beat-rate even though inline execution at sample-rate is fatal.
+
+### Notes
+
+- Latency reported for both the `-O0` debug build (318 ms) and the `-O2`
+  optimized build (85 ms, the representative deployment figure).
+- Inference runs in float on the FPU; the int8 model and CMSIS-NN kernels
+  (Stage 2.2) remain an available optimization for lower flash/RAM and latency.
+- The float engine is verified bit-close to the trained Keras model, so on-device
+  decisions match the offline model.
