@@ -1,154 +1,168 @@
-# ecg-mcu — Real-Time Arrhythmia Detection on a Microcontroller
+# ECG Arrhythmia Detection on STM32
 
-A single-lead ECG pipeline that filters the signal, detects R-peaks with a hand-implemented **Pan–Tompkins** algorithm, and reports heart rate **in real time on an STM32 Nucleo-F411RE (Cortex-M4F)** — validated against the MIT-BIH Arrhythmia Database. A browser dashboard (Web Serial + Next.js) renders the live trace with an original **live P-Q-R-S-T morphology callout**.
+> Real-time heartbeat detection and neural-net beat classification on a Cortex-M4 microcontroller, with a live Web Serial dashboard — from raw electrodes to on-device inference.
 
-> ⚠️ **Not a medical device.** This is an engineering portfolio project. Nothing here is intended for diagnosis, monitoring, or any clinical use.
+**Not a medical device.** This is a learning and portfolio project.
 
-![Live ECG dashboard with real-time PQRST annotation](docs/dashboard-demo.gif)
+![Live ECG Dashboard](docs/live-dashboard.png)
 
-*Live trace on a chart-recorder sweep; the P, Q, R, S, and T fiducials are located on the actual waveform and labelled as each beat settles.*
-
----
-
-## Why this project is different
-
-Most hobby ECG projects run a classifier in batch on a laptop and report a single accuracy number. This one is built the way the field actually cares about:
-
-- **Real-time on hardware, not batch on a laptop.** The detector runs on the MCU itself, fed by a timer-driven feed through a ring buffer. Measured on-device via the DWT cycle counter, worst-case compute latency is **166.7 µs/sample — 6.0% of the 2777 µs budget at 360 Hz, roughly 300× under the 50 ms target.**
-- **Correct inter-patient evaluation.** Training and test use *different* patients (the de Chazal DS1/DS2 split). Naive per-beat splits leak the same patient into both sets and inflate accuracy; the patient-independent split is the honest way to measure generalization.
-- **Live morphology, not just peak-picking.** The dashboard's PQRST callout locates all five fiducials by snapping to the real local extrema in the buffered samples around each detected R-peak — a live version of the textbook ECG diagram, reading the actual signal.
-
-*(Phase 2 adds a fourth: a head-to-head comparison of the classical detector vs. a quantized on-device neural net — accuracy, latency, and flash/RAM footprint on the same board.)*
+*Live ECG from my own heart, detected in real time on an STM32F411RE, displayed on a custom Web Serial dashboard with PQRST annotation.*
 
 ---
 
-## How it works
+## What this project does
 
-**Signal pipeline.** Raw single-lead ECG → band-pass filter (~5–15 Hz, the band that maximizes QRS energy) → Pan–Tompkins (derivative → squaring → moving-window integration → adaptive thresholds) → R-peak train → instantaneous heart rate from R-R intervals, smoothed over the last few beats.
+1. **Acquires a live single-lead ECG** from snap electrodes via an AD8232 analog front-end, sampled at 360 Hz by the STM32's ADC+DMA.
+2. **Detects every heartbeat in real time** using an adaptive Pan–Tompkins R-peak detector running on the Cortex-M4 (~38 µs/beat, well within the 2.78 ms real-time budget).
+3. **Classifies each beat** into one of 5 AAMI arrhythmia classes (Normal, Supraventricular, Ventricular, Fusion, Unknown) using a compact 1-D CNN with RR-timing inputs, trained on the MIT-BIH Arrhythmia Database with a proper inter-patient evaluation split.
+4. **Streams the trace to a live Web Serial dashboard** (Next.js) with real-time BPM, elapsed time, and optional PQRST morphology annotation.
 
-**Real-time architecture on the MCU.** A hardware timer (TIM2) paces sampling at 360 Hz. Samples land in a 64-slot **ring buffer** so acquisition and processing never touch the same slot; the main loop drains the buffer through the detector. Each detected peak and each raw sample stream out over the ST-LINK virtual COM port. The same detector code runs bit-identically on a laptop (`c-reference/`) and on the board, which is how the port was de-risked before any hardware was involved.
+### Live signal proof
 
-**The dashboard (`dashboard/`).** A Next.js app connects to the board over the **Web Serial API** and parses two line types:
+The system reads a real biological signal — removing the reference electrode immediately disrupts the trace, confirming the dashboard displays a live signal, not a replay:
 
-```
-S <int>                        one waveform sample (integer, unit-agnostic)
-R-peak @ <idx>   inst BPM <n>   an R-peak with instantaneous heart rate
-```
-
-It draws a scrolling ECG trace on an ECG-paper grid, a large live BPM readout, and — as its signature — the live P-Q-R-S-T callout on the most recently settled beat. Because the Y axis autoscales, the same dashboard renders replay data (integer microvolts) and live ADC data (raw counts) with no code change. A built-in **Simulate** mode generates a synthetic beat so the whole UI can be demoed with no hardware attached.
+![Pad removal proof](docs/live-proof.png)
 
 ---
 
-## Results
+## Key results
 
-### On-device, MIT-BIH record 100 (60 s @ 360 Hz, Nucleo-F411RE @ 84 MHz)
+### Classical vs. neural-net head-to-head (STM32F411RE @ 84 MHz)
 
-| Metric | Value |
-|---|---|
-| R-peak correctness | **72/72** peaks match the desktop C reference exactly (bit-verified via `Compare-Object`, not by eye) |
-| Compute latency / sample | avg **43.2 µs**, worst **166.7 µs** (DWT cycle counter) |
-| Real-time budget @ 360 Hz | 2777 µs/sample → **6.0% worst-case utilization**, ~300× under the 50 ms target |
-| Timer-driven playback | **0 ring-buffer overflows**, wall clock 60003 ms vs 60000 expected (0.005% error) |
-| Footprint | 190,788 B flash (36%; ~172.8 KB is the embedded ECG array, firmware itself ~18 KB), 2,096 B RAM (1.6%) |
-
-*Compute latency (above) is distinct from algorithmic detection latency — the ~100–200 ms delay between the physical R-peak and its report, set by Pan-Tompkins' integration window and filter group delay. That is inherent to the algorithm, not the hardware, and wouldn't shrink on a faster MCU.*
-
-### Beat classification (Stage 1.1, Python, inter-patient DS2)
-
-Classification of MIT-BIH beats into the 5 AAMI classes using hand-crafted R-R + morphology features, evaluated on held-out patients (no patient appears in both train and test):
-
-![AAMI beat classification confusion matrix, inter-patient DS2](docs/confusion_matrix.png)
-
-| Class | Sensitivity (recall) | PPV (precision) |
+| | Pan–Tompkins detector | RR-augmented CNN classifier |
 |---|---|---|
-| N (normal) | 88.4% | 97.0% |
-| S (supraventricular) | 11.3% | 19.8% |
-| V (ventricular) | 84.8% | 67.7% |
-| F (fusion) | 92.0% | 8.3% |
-| Q (unknown) | 0% (n=7) | — |
+| **Task** | R-peak detection | 5-class AAMI beat classification |
+| **Accuracy (DS2)** | 72/72 R-peaks on rec. 100 | 91.1% (int8) / 92.3% (float) |
+| **vs. RandomForest** | — | RF 85.3% → CNN wins on N, S, V |
+| **On-device latency** | ~38 µs/beat | 85 ms/beat (−O2) |
+| **Flash** | ~18 KB | +36.6 KB |
+| **RAM** | ~2 KB | +32 KB scratch |
+| **Runs inline at sample rate?** | Yes | No — must decouple (see below) |
 
-Overall accuracy **85.3%** across 49,707 held-out beats. **N and V separate well on hand-crafted features; S and F do not** — which is precisely why Phase 2 replaces the classical classifier with a quantized 1D-CNN. The classical classifier stays in Python during Phase 1 and is ported to the MCU in Stage 2.3, where it becomes the baseline arm of the on-device classical-vs-NN comparison.
+### Per-class comparison (Se / PPV on inter-patient DS2)
 
----
+| Class | RandomForest | CNN baseline | CNN + RR timing |
+|---|---|---|---|
+| N (normal) | 88.4 / 97.0 | 77.0 / 96.9 | **96.2 / 96.9** |
+| S (supraventricular) | 11.3 / 19.8 | 2.8 / 3.4 | **16.7 / 61.2** |
+| V (ventricular) | 84.8 / 67.7 | 90.9 / 27.7 | **93.3 / 60.2** |
+| F (fusion) | 92.0 / 8.3 | 0.5 / 0.1 | 0.5 / 0.7 |
 
-## Status
+The raw-window CNN beat the RandomForest on ventricular beats but collapsed on supraventricular (S) — because S beats are defined by their *timing* (premature RR), which a fixed window throws away. Adding two RR-timing inputs (prev\_RR and RR\_ratio) recovered S recall from 2.8% → 16.7% at 61% precision. F (fusion) is a known dataset hard-limit — only 388 examples in all of MIT-BIH.
 
-**Phase 1 — Classical pipeline, real-time on hardware**
+### The decoupling finding
 
-- [x] **1.1** Offline pipeline in Python, validated on MIT-BIH (Pan–Tompkins + beat features, inter-patient split)
-- [x] **1.2** Re-implemented in portable C, bit-compared against the Python reference
-- [x] **1.3** Running on the STM32 from recorded data — timer + ring buffer at 360 Hz, on-device latency logged (DWT)
-- [x] **1.4a** ADC + DMA sampling triggered by TIM2-TRGO at 360 Hz (verified)
-- [x] **1.4b** AD8232 analog front-end wired; full electronics path proven *(awaiting fresh electrode pads for live capture)*
-- [x] **1.4c** Live heart-rate math from R-R intervals, validated on replay
-- [x] **1.4e** Web Serial dashboard + live PQRST callout
-- [ ] **1.4d** Real-world noise handling (baseline wander, 60 Hz notch, motion) — needs the live signal
-- [ ] **Live bring-up** — first ECG off a real electrode lead
-
-**Phase 2 — On-device neural net + wearable** *(planned)*
-
-- [ ] Train a compact 1D-CNN on segmented beats → AAMI classes
-- [ ] Int8 quantization → deploy with LiteRT-for-Microcontrollers + CMSIS-NN
-- [ ] Classical-vs-NN comparison (accuracy, latency, flash/RAM) on the same board
-- [ ] Low-power wearable form factor (STM32L4) + rigorous evaluation
+The CNN is ~2,200× heavier per invocation than the detector. Running it inline in the 360 Hz sample loop overflows the ring buffer (3,905 samples dropped in a 60 s record). The correct architecture runs the lightweight detector on every sample and schedules the CNN at beat-rate (~1 Hz) off the critical path — at 85 ms inference against an ~830 ms beat interval, there is ~10× headroom.
 
 ---
 
-## Repository layout
+## Architecture
 
 ```
-arrhythmia-detection-mcu/
-├── pipeline/         # Python: filters, Pan–Tompkins, beat features, validation
-├── c-reference/      # portable C detector — runs on PC, bit-tested vs Python
-├── firmware/         # STM32CubeIDE project (Nucleo-F411RE)
-│   └── ecg-mcu/Core/Src/app_ecg.c   # replay modes, ring buffer, sample + peak streaming
-├── dashboard/        # Next.js Web Serial dashboard (this checkpoint)
-│   └── app/page.tsx  # the whole UI: trace, BPM, live PQRST callout, Simulate mode
-└── docs/             # demo GIF, results, confusion matrix
+Electrodes → AD8232 → STM32 ADC (360 Hz, DMA+TIM2 TRGO)
+                         ↓
+                    Ring buffer (64-slot, ISR-fed)
+                         ↓
+               Pan–Tompkins detector (~38 µs/sample)
+                    ↓              ↓
+              R-peak index    Stream "S <val>" to dashboard
+                    ↓
+           Beat window (252 samples) + RR features
+                    ↓
+           Float CNN classifier (85 ms/beat, −O2)
+                    ↓
+              AAMI class (N/S/V/F/Q) + BPM
 ```
 
 ---
 
-## Running it
+## Project structure
 
-**Python pipeline**
+```
+pipeline/           Python ML pipeline
+  ├── pan_tompkins.py         Adaptive R-peak detector
+  ├── classify.py             RandomForest baseline (Stage 1.1)
+  ├── train_cnn.py            1-D CNN baseline (Stage 2.1)
+  ├── train_cnn_rr.py         RR-augmented CNN (Stage 2.1b)
+  ├── quantize_cnn.py         Int8 post-training quantization (Stage 2.2)
+  ├── extract_weights.py      Export float weights → C header
+  ├── dump_deploy_constants.py  Quantization params → C header
+  ├── noise_filters.py        Baseline-wander HP + 60 Hz notch design/validation
+  ├── data_loader.py          MIT-BIH loading + AAMI mapping + de Chazal split
+  ├── filters.py / features.py / evaluate_detection.py
+  └── ...
+firmware/ecg-mcu/   STM32CubeIDE project (Nucleo-F411RE)
+  └── Core/
+      ├── Src/app_ecg.c       Main application: menu, live/replay modes, detection, BPM
+      ├── Src/beat_cnn.c       Hand-written float CNN inference (verified vs Keras)
+      ├── Src/detector.c       Portable C Pan–Tompkins detector
+      ├── Inc/beat_cnn.h
+      ├── Inc/model_weights.h  Float weights (~32 KB)
+      ├── Inc/model_config.h   Deployment constants (quantization params, RR stats)
+      └── Inc/ecg_data.h       Embedded MIT-BIH record for replay/validation
+c-reference/        Portable C detector + biquad filters (host-testable)
+dashboard/          Next.js Web Serial dashboard
+  └── app/page.tsx  Live ECG trace, BPM, PQRST annotation, simulate mode
+docs/               Results, confusion matrices, screenshots
+models/             Trained models (gitignored — regenerate with pipeline/)
+```
 
+---
+
+## Stages
+
+| Tag | Stage | What it proved |
+|---|---|---|
+| — | 1.1 | Python Pan–Tompkins + AAMI RandomForest (85.3% inter-patient) |
+| — | 1.2 | Portable C detector, bit-verified vs Python |
+| — | 1.3 | Real-time on STM32: 72/72 peaks, 43 µs avg, 0 ring overflows |
+| v1.4e | 1.4 | Live ADC, AD8232 wiring, Web Serial dashboard, noise filters |
+| — | 2.1 | Raw-window CNN baseline; 2.1b added RR timing → S recall 6× up |
+| — | 2.2 | Int8 quantization: 92.3% → 91.1%, 167 KB → 25 KB |
+| v2.3 | 2.3 | On-device float inference, 85 ms/beat (−O2), head-to-head measured |
+| — | Live | Live ECG from own heart, detected + displayed on dashboard |
+
+---
+
+## Hardware
+
+- **MCU:** STM32 Nucleo-F411RE (Cortex-M4F @ 84 MHz, 512 KB flash, 128 KB RAM)
+- **AFE:** SparkFun AD8232 single-lead heart rate monitor
+- **Electrodes:** Snap-style foam ECG pads (any brand — Kendall 530, Medline, etc.)
+- **Connection:** AD8232 OUTPUT → PA0, 3.3V → 3V3, GND → GND (3 wires, soldered)
+
+## Software
+
+- **Firmware:** C (GCC arm-none-eabi), STM32CubeIDE 2.2.0, HAL drivers
+- **ML pipeline:** Python 3.11, TensorFlow/Keras 2.21, scikit-learn, wfdb
+- **Dashboard:** Next.js 16, Web Serial API, TypeScript
+- **On-device inference:** Hand-written float C engine, verified bit-close to Keras (max diff 1.19e-7)
+
+---
+
+## Quick start
+
+### Run the dashboard on replay (no hardware needed)
 ```bash
-# from pipeline/ — needs wfdb, numpy, scipy, matplotlib, scikit-learn
-python run_stage1.py
+cd dashboard && npm install && npm run dev -- --webpack
+# Open localhost:3000 → click "Simulate" for synthetic PQRST,
+# or connect the board and pick mode 2 for MIT-BIH replay.
 ```
 
-**Firmware**
-
-Open `firmware/ecg-mcu/` in STM32CubeIDE, build, and flash to the Nucleo-F411RE (onboard ST-LINK — no separate programmer needed). Open a serial monitor at **115200 baud** and choose a mode from the menu (mode 2 = timer-driven 360 Hz replay, which streams samples + R-peaks for the dashboard).
-
-**Dashboard**
-
+### Train the CNN from scratch
 ```bash
-cd dashboard
-npm install
-npm run dev
-# open the printed localhost URL in Chrome or Edge
+pip install tensorflow scikit-learn wfdb matplotlib
+python -m pipeline.train_cnn_rr        # trains on MIT-BIH DS1, evaluates on DS2
+python -m pipeline.quantize_cnn        # int8 quantization + accuracy comparison
 ```
 
-- **Simulate** — synthetic ECG, no hardware required (great for a first look).
-- **Connect board** — quit any other serial tool first (the COM port is single-owner), pick the STM32 port, and stream live.
-
-> Web Serial is only available in Chromium browsers (Chrome / Edge), and only over `localhost` or HTTPS.
-
----
-
-## Interview / talking points
-
-- Why Pan–Tompkins band-passes to ~5–15 Hz, and how monitoring cutoffs (0.5 Hz high-pass, ~40 Hz low-pass) trade off against a wider diagnostic band.
-- Real-time on embedded: timer-driven feed, ring buffer, DWT-measured latency — vs. the usual batch-on-a-laptop project.
-- Compute latency vs. algorithmic detection latency, and why only one of them scales with MCU speed.
-- Why patient-independent evaluation matters and how naive splits inflate accuracy.
-- Single-lead limits (AD8232) and what multi-lead would take (e.g. ADS1298) — natural future work.
+### Flash and run live
+1. Open `firmware/ecg-mcu/` in STM32CubeIDE, build, drag `.bin` onto NOD\_F411RE.
+2. Attach AD8232 + electrodes (see Hardware above).
+3. Open the dashboard, connect, reset the board — mode 6 runs live by default.
 
 ---
 
-## Author
+## License
 
-**Isaac Glenu** — Systems Design Engineering (Biomedical option), University of Waterloo.
-[LinkedIn](https://www.linkedin.com/in/isaac-glenu7) · [GitHub](https://github.com/isaaac-afk)
+Apache 2.0

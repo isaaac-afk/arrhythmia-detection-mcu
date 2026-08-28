@@ -70,6 +70,9 @@ static volatile double   rb[RB_SIZE];
 static volatile uint32_t rb_head, rb_tail, rb_overflow;
 static volatile uint32_t feed_idx;
 static volatile uint8_t  feed_done;
+static volatile uint8_t  live_mode = 0;   /* <-- add this line */;
+#define ADC_BUF 8
+static volatile uint16_t adc_buf[ADC_BUF];
 #endif
 
 void app_ecg_run(void) {
@@ -114,13 +117,21 @@ void app_ecg_run(void) {
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance != TIM2) return;
-    if (feed_idx >= ECG_N) { feed_done = 1; return; }
 
-    uint32_t next = (rb_head + 1u) & (RB_SIZE - 1u);
-    if (next == rb_tail) { rb_overflow++; return; }   /* full: drop, count it */
-
-    rb[rb_head] = ecg_samples[feed_idx++];
-    rb_head = next;
+    if (!live_mode) {
+        /* replay mode (existing behavior) */
+        if (feed_idx >= ECG_N) { feed_done = 1; return; }
+        uint32_t next = (rb_head + 1u) & (RB_SIZE - 1u);
+        if (next == rb_tail) { rb_overflow++; return; }
+        rb[rb_head] = ecg_samples[feed_idx++];
+        rb_head = next;
+    } else {
+        /* live mode: read latest ADC sample from DMA buffer */
+        uint32_t next = (rb_head + 1u) & (RB_SIZE - 1u);
+        if (next == rb_tail) { rb_overflow++; return; }
+        rb[rb_head] = (double)adc_buf[0];
+        rb_head = next;
+    }
 }
 /* ---- Stage 2.3: on-device beat classification (float CNN) ---- */
 #define RR_HIST 8
@@ -262,6 +273,52 @@ void app_ecg_dump(void)
 }
 
 /* --- mode select ------------------------------------------------------ */
+
+/* ---- Stage 1.4: live ECG from AD8232 ---- */
+void app_ecg_live(void)
+{
+    setvbuf(stdout, NULL, _IONBF, 0);
+    pt_detector d;
+    pt_init(&d);
+    bpm_state bpm;
+    bpm_init(&bpm);
+    cyc_init();
+
+    rb_head = rb_tail = rb_overflow = 0;
+    live_mode = 1;
+
+    long ridx;
+    uint32_t n_peaks = 0, processed = 0;
+
+    printf("\r\n=== LIVE ECG @ 360 Hz (AD8232 on PA0) ===\r\n");
+    printf("press reset to stop\r\n");
+
+    /* start ADC+DMA paced by TIM2 TRGO, plus TIM2 interrupt to push to ring */
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, ADC_BUF);
+    HAL_TIM_Base_Start_IT(&htim2);
+
+    while (1) {
+        if (rb_tail == rb_head) continue;   /* wait for next sample */
+
+        double s = rb[rb_tail];
+        rb_tail = (rb_tail + 1u) & (RB_SIZE - 1u);
+
+        /* stream for dashboard (raw uint16 as integer) */
+        printf("S %d\r\n", (int)s);
+
+        /* detect */
+        int fired = pt_process(&d, s, &ridx);
+        processed++;
+
+        if (fired) {
+            uint32_t bpm_val = bpm_update(&bpm, ridx, ECG_FS);
+            if (bpm_val) printf("R-peak @ %ld   inst BPM %lu\r\n",
+                                ridx, (unsigned long)bpm_val);
+            else         printf("R-peak @ %ld   (first)\r\n", ridx);
+            n_peaks++;
+        }
+    }
+}
 void app_ecg_menu(void)
 {
     uint8_t c = 0;
@@ -271,22 +328,23 @@ void app_ecg_menu(void)
     printf("  [2] replay, TIM2-driven 360 Hz  (Stage 1.3c)\r\n");
     printf("  [3] dump samples as hex         (harness self-test)\r\n");
     printf("  [4] CNN latency bench           (Stage 2.3)\r\n");
+    printf("  [5] live ADC raw (PA0, 360 Hz)  (Stage 1.4)\r\n");
+    printf("  [6] live ECG (AD8232+dashboard) (Stage 1.4)\r\n");
     printf("select within 5 s [default 2]: ");
 
-    if (HAL_UART_Receive(&huart2, &c, 1, 5000) != HAL_OK) c = '2';
+    if (HAL_UART_Receive(&huart2, &c, 1, 5000) != HAL_OK) c = '6';
     printf("%c\r\n", (char)c);
 
     switch (c) {
         case '1': app_ecg_run();             break;
         case '3': app_ecg_dump();            break;
         case '4': app_ecg_classify_bench();  break;
+        case '5': app_ecg_adc_raw();         break;
+        case '6': app_ecg_live();            break;
         default:  app_ecg_run_timed();       break;
     }
 }
-#endif
-#ifndef HOST_TEST
-#define ADC_BUF 8
-static volatile uint16_t adc_buf[ADC_BUF];
+
 
 void app_ecg_adc_raw(void)
 {
@@ -313,6 +371,7 @@ void app_ecg_adc_raw(void)
             printf("%4u %s\r\n", v, line);
 
             HAL_Delay(20);   /* 50 prints/sec — fast enough to see a beat */
-        }
+    }
+
 }
 #endif
