@@ -4,7 +4,7 @@
 
 **Not a medical device.** This is a learning and portfolio project.
 
-![Live ECG Dashboard](docs/live-dashboard.png)
+![Live ECG Dashboard](docs/live-dashboard.jpg)
 
 *Live ECG from my own heart, detected in real time on an STM32F411RE, displayed on a custom Web Serial dashboard with PQRST annotation.*
 
@@ -21,7 +21,7 @@
 
 The system reads a real biological signal — removing the reference electrode immediately disrupts the trace, confirming the dashboard displays a live signal, not a replay:
 
-![Pad removal proof](docs/live-proof.png)
+![Pad removal proof](docs/live-proof.jpg)
 
 ---
 
