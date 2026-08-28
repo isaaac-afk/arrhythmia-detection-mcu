@@ -17,6 +17,9 @@
 3. **Classifies each beat** into one of 5 AAMI arrhythmia classes (Normal, Supraventricular, Ventricular, Fusion, Unknown) using a compact 1-D CNN with RR-timing inputs, trained on the MIT-BIH Arrhythmia Database with a proper inter-patient evaluation split.
 4. **Streams the trace to a live Web Serial dashboard** (Next.js) with real-time BPM, elapsed time, and optional PQRST morphology annotation.
 
+![Live ECG Demo](docs/dashboard-demo.gif)
+
+
 ### Live signal proof
 
 The system reads a real biological signal — removing the reference electrode immediately disrupts the trace, confirming the dashboard displays a live signal, not a replay:
