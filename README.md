@@ -2,7 +2,7 @@
 
 > Real-time heartbeat detection and neural-net beat classification on a Cortex-M4 microcontroller, with a live Web Serial dashboard — from raw electrodes to on-device inference.
 
-**Not a medical device.** This is a learning and portfolio project.
+**Not a medical device.** This is a learning project.
 
 ![Live ECG Dashboard](docs/live-dashboard.jpg)
 
