@@ -14,7 +14,7 @@
 ## What this project does
 
 1. **Acquires a live single-lead ECG** from snap electrodes via an AD8232 analog front-end, sampled at 360 Hz by the STM32's ADC+DMA.
-2. **Detects every heartbeat in real time** using an adaptive Pan–Tompkins R-peak detector running on the Cortex-M4 (~38 µs/beat, well within the 2.78 ms real-time budget).
+2. **Detects every heartbeat in real time** using an adaptive Pan–Tompkins R-peak detector running on the Cortex-M4 (~43 µs/beat, well within the 2.78 ms real-time budget).
 3. **Classifies each beat** into one of 5 AAMI arrhythmia classes (Normal, Supraventricular, Ventricular, Fusion, Unknown) using a compact 1-D CNN with RR-timing inputs, trained on the MIT-BIH Arrhythmia Database with a proper inter-patient evaluation split.
 4. **Streams the trace to a live Web Serial dashboard** (Next.js) with real-time BPM, elapsed time, and optional PQRST morphology annotation.
 
