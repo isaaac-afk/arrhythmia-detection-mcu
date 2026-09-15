@@ -23,7 +23,7 @@
 
 ### Live signal proof
 
-The system reads a real biological signal — removing the reference electrode immediately disrupts the trace, confirming the dashboard displays a live signal, not a replay:
+The system reads a real biological signal — removing the reference electrode immediately disrupts the trace, confirming the dashboard displays a live signal, not a replay;
 
 ![Pad removal proof](docs/live-proof.jpg)
 
